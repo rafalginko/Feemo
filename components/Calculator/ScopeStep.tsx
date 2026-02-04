@@ -1,8 +1,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Stage, TeamMember, ProjectInputs, RoleType, GlobalMultipliers, CalculationTemplate, TimeUnit, StageType } from '../../types';
+import { Stage, TeamMember, ProjectInputs, RoleType, GlobalMultipliers, CalculationTemplate, TimeUnit, StageType, InputType } from '../../types';
 import { Button } from '../ui/Button';
-import { ChevronDown, ChevronRight, Settings2, Zap, ArrowRight, List, Layout, Wallet, Calculator } from 'lucide-react';
+import { ChevronDown, ChevronRight, Settings2, Zap, ArrowRight, List, Layout, Wallet, Calculator, Info, HelpCircle, Plus, X, CheckSquare, ToggleLeft, Hash } from 'lucide-react';
 import { TimeUnitSwitcher } from '../ui/TimeUnitSwitcher';
 
 interface ScopeStepProps {
@@ -18,16 +18,33 @@ interface ScopeStepProps {
   setTimeUnit: (unit: TimeUnit) => void;
   team: TeamMember[];
   stages: Stage[];
+  onAddTemplateElement?: (templateId: string, groupId: string, name: string, valueInCurrentUnit: number, unit: TimeUnit, type: InputType) => void;
 }
+
+// Reused constant for consistent UI
+const INPUT_TYPES: { id: InputType; label: string; icon: React.ReactNode; }[] = [
+    { id: 'boolean', label: 'Tak/Nie', icon: <ToggleLeft className="w-4 h-4" /> },
+    { id: 'count', label: 'Liczba', icon: <Hash className="w-4 h-4" /> },
+    { id: 'select', label: 'Wybór (1)', icon: <List className="w-4 h-4" /> },
+    { id: 'multiselect', label: 'Wybór (N)', icon: <CheckSquare className="w-4 h-4" /> }
+];
 
 export const ScopeStep: React.FC<ScopeStepProps> = ({ 
   inputs, setInputs, templates, multipliers, onBack, onNext,
-  lastCalculatedSignature, onUpdateSignature, timeUnit, setTimeUnit, team, stages
+  lastCalculatedSignature, onUpdateSignature, timeUnit, setTimeUnit, team, stages,
+  onAddTemplateElement
 }) => {
   
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [showModifiersHelp, setShowModifiersHelp] = useState(false);
   const activeTemplate = useMemo(() => templates.find(t => t.id === inputs.templateId), [templates, inputs.templateId]);
   
+  // State for adding new element
+  const [addingToGroupId, setAddingToGroupId] = useState<string | null>(null);
+  const [newElName, setNewElName] = useState('');
+  const [newElValue, setNewElValue] = useState<string>('');
+  const [newElType, setNewElType] = useState<InputType>('boolean');
+
   useEffect(() => {
     if (activeTemplate && expandedGroups.size === 0) {
       setExpandedGroups(new Set(activeTemplate.groups.map(g => g.id)));
@@ -41,7 +58,7 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
     setExpandedGroups(newSet);
   };
 
-  const updateElementValue = (elementId: string, value: number | string) => {
+  const updateElementValue = (elementId: string, value: number | string | string[]) => {
      setInputs(prev => ({
         ...prev,
         elementValues: {
@@ -51,8 +68,69 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
      }));
   };
 
+  const handleMultiselectChange = (elementId: string, optionId: string, isChecked: boolean) => {
+      const currentVal = inputs.elementValues[elementId];
+      let newArray: string[] = [];
+      
+      if (Array.isArray(currentVal)) {
+          newArray = [...currentVal];
+      }
+
+      if (isChecked) {
+          if (!newArray.includes(optionId)) newArray.push(optionId);
+      } else {
+          newArray = newArray.filter(id => id !== optionId);
+      }
+      
+      updateElementValue(elementId, newArray);
+  };
+
   const getElementValue = (elementId: string) => {
      return inputs.elementValues[elementId];
+  };
+
+  // Handle adding new element
+  const handleStartAdd = (e: React.MouseEvent, groupId: string) => {
+      e.stopPropagation();
+      setAddingToGroupId(groupId);
+      setNewElName('');
+      setNewElValue('');
+      setNewElType('boolean');
+  };
+
+  const handleCancelAdd = () => {
+      setAddingToGroupId(null);
+  };
+
+  const handleConfirmAdd = () => {
+      if (!addingToGroupId || !newElName.trim() || !newElValue || !activeTemplate || !onAddTemplateElement) return;
+      
+      const val = parseFloat(newElValue);
+      if (isNaN(val)) return;
+
+      onAddTemplateElement(activeTemplate.id, addingToGroupId, newElName.trim(), val, timeUnit, newElType);
+      setAddingToGroupId(null);
+  };
+
+  // --- Multiplier Selection Handlers ---
+  const handleMultiplierSelect = (groupId: string, value: string) => {
+      setInputs(prev => ({
+          ...prev,
+          selectedMultipliers: {
+              ...prev.selectedMultipliers,
+              [groupId]: value
+          }
+      }));
+  };
+
+  const handleMultiplierBoolean = (groupId: string) => {
+      setInputs(prev => ({
+          ...prev,
+          selectedMultipliers: {
+              ...prev.selectedMultipliers,
+              [groupId]: !prev.selectedMultipliers[groupId]
+          }
+      }));
   };
 
   // --- Calculation Logic (Visual Only here) ---
@@ -71,6 +149,13 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
                        total += selectedOption.rbh;
                    }
                }
+           } else if (el.inputType === 'multiselect') {
+               if (Array.isArray(val) && el.options) {
+                   val.forEach(optId => {
+                       const opt = el.options?.find(o => o.id === optId);
+                       if (opt) total += opt.rbh;
+                   });
+               }
            } else {
                // Count or Boolean (number)
                const numVal = typeof val === 'number' ? val : 0;
@@ -81,23 +166,41 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
      return total;
   }, [activeTemplate, inputs.elementValues]);
 
-  const modifiers = useMemo(() => {
-    const complexity = multipliers.complexity[inputs.complexity];
-    const lod = multipliers.lod[inputs.lod];
-    const express = inputs.isExpress ? multipliers.express : 1.0;
-    const total = complexity * lod * express;
-    return { complexity, lod, express, total };
-  }, [inputs.complexity, inputs.lod, inputs.isExpress, multipliers]);
+  const modifierFactor = useMemo(() => {
+    let total = 1.0;
+    
+    // Ensure multipliers is array for iteration
+    if (Array.isArray(multipliers)) {
+        multipliers.forEach(group => {
+            if (!group.isEnabled) return;
+            const selection = inputs.selectedMultipliers[group.id];
 
-  const finalTotalRBH = rawTotalRBH * modifiers.total;
+            if (group.type === 'select' && group.options) {
+                const opt = group.options.find(o => o.id === selection);
+                if (opt) total *= opt.value;
+            } else if (group.type === 'boolean') {
+                if (selection === true) total *= (group.value || 1.0);
+            } else if (group.type === 'scale' && group.scaleConfig && inputs.area > 0) {
+                 const scaleMult = Math.pow(group.scaleConfig.baseArea / inputs.area, group.scaleConfig.exponent);
+                 total *= scaleMult;
+            }
+        });
+    }
+
+    return total;
+  }, [multipliers, inputs.selectedMultipliers, inputs.area]);
+
+  const finalTotalRBH = rawTotalRBH * modifierFactor;
 
   // We don't calculate stages here anymore. Just update signature to detect changes.
   useEffect(() => {
-     const sig = `${inputs.templateId}-${finalTotalRBH.toFixed(2)}-${inputs.calculationMode}-${inputs.targetFee}-${inputs.includeExternalCostsInFee}`;
+     // Create a signature of multipliers
+     const multSig = JSON.stringify(inputs.selectedMultipliers);
+     const sig = `${inputs.templateId}-${finalTotalRBH.toFixed(2)}-${inputs.calculationMode}-${inputs.targetFee}-${inputs.includeExternalCostsInFee}-${multSig}`;
      if (sig !== lastCalculatedSignature) {
         onUpdateSignature(sig);
      }
-  }, [finalTotalRBH, lastCalculatedSignature, inputs.calculationMode, inputs.targetFee, inputs.includeExternalCostsInFee]);
+  }, [finalTotalRBH, lastCalculatedSignature, inputs.calculationMode, inputs.targetFee, inputs.includeExternalCostsInFee, inputs.selectedMultipliers]);
 
 
   const getConversionFactor = () => {
@@ -118,6 +221,8 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
   }, [stages]);
 
   if (!activeTemplate) return <div>Wybierz szablon w kroku 1.</div>;
+
+  const multiplierGroups = Array.isArray(multipliers) ? multipliers : [];
 
   return (
     <div className="max-w-7xl mx-auto pb-24 grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -169,6 +274,14 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
                              return acc + (opt ? opt.rbh : 0);
                         }
                         return acc;
+                    } else if (el.inputType === 'multiselect') {
+                        if (Array.isArray(val) && el.options) {
+                            return acc + val.reduce((sum, optId) => {
+                                const opt = el.options?.find(o => o.id === optId);
+                                return sum + (opt ? opt.rbh : 0);
+                            }, 0);
+                        }
+                        return acc;
                     }
                     return acc + ((typeof val === 'number' ? val : 0) * el.baseRbh);
                 }, 0);
@@ -195,6 +308,8 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
                                
                                if (el.inputType === 'select') {
                                    isActive = !!rawVal; // String ID exists
+                               } else if (el.inputType === 'multiselect') {
+                                   isActive = Array.isArray(rawVal) && rawVal.length > 0;
                                } else {
                                    const numVal = typeof rawVal === 'number' ? rawVal : 0;
                                    isActive = numVal > 0;
@@ -205,17 +320,42 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
                                      <div className="flex-1 pr-4">
                                         <div className="font-medium text-slate-800 flex items-center gap-2">
                                           {el.name}
-                                          {el.inputType !== 'select' ? (
+                                          {el.inputType === 'boolean' || el.inputType === 'count' ? (
                                              <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
                                                 {(el.baseRbh / conversionFactor).toFixed(1)}{unitLabel}
                                              </span>
                                           ) : (
                                               <span className="text-[10px] text-slate-400 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100 flex items-center gap-1">
-                                                  <List className="w-3 h-3" /> Opcje
+                                                  {el.inputType === 'multiselect' ? <CheckSquare className="w-3 h-3" /> : <List className="w-3 h-3" />}
+                                                  Opcje
                                               </span>
                                           )}
                                         </div>
                                         {el.description && <div className="text-xs text-slate-500 mt-1">{el.description}</div>}
+                                        
+                                        {/* Multiselect UI */}
+                                        {el.inputType === 'multiselect' && (
+                                            <div className="mt-3 flex flex-wrap gap-2">
+                                                {el.options?.map(opt => {
+                                                    const isChecked = Array.isArray(rawVal) && rawVal.includes(opt.id);
+                                                    return (
+                                                        <label key={opt.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all ${isChecked ? 'bg-blue-100 border-blue-300' : 'bg-white border-slate-200 hover:border-slate-300'}`}>
+                                                            <input 
+                                                                type="checkbox"
+                                                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                                                checked={isChecked}
+                                                                onChange={(e) => handleMultiselectChange(el.id, opt.id, e.target.checked)}
+                                                            />
+                                                            <span className={`text-sm ${isChecked ? 'text-blue-800 font-medium' : 'text-slate-600'}`}>{opt.name}</span>
+                                                            <span className="text-xs font-bold text-slate-400 bg-slate-100 px-1.5 rounded">
+                                                                {(opt.rbh / conversionFactor).toFixed(1)}{unitLabel}
+                                                            </span>
+                                                        </label>
+                                                    );
+                                                })}
+                                                {(!el.options || el.options.length === 0) && <span className="text-xs text-slate-400 italic">Brak zdefiniowanych opcji.</span>}
+                                            </div>
+                                        )}
                                      </div>
                                      
                                      <div className="flex items-center gap-4">
@@ -272,10 +412,79 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
                                                 )}
                                             </div>
                                         )}
+                                        
+                                        {/* Multiselect summary cost */}
+                                        {el.inputType === 'multiselect' && Array.isArray(rawVal) && rawVal.length > 0 && (
+                                            <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded whitespace-nowrap">
+                                                Suma: {rawVal.reduce((acc, id) => acc + (el.options?.find(o => o.id === id)?.rbh || 0), 0) / conversionFactor} {unitLabel}
+                                            </span>
+                                        )}
                                      </div>
                                   </div>
                                );
                             })}
+
+                            {/* Add Element Section within Group */}
+                            {onAddTemplateElement && (
+                                <div className="p-3 bg-slate-50 border-t border-slate-100">
+                                    {addingToGroupId === group.id ? (
+                                        <div className="flex flex-col bg-white p-3 rounded border border-blue-200 shadow-sm animate-in fade-in zoom-in-95 duration-200">
+                                            
+                                            {/* Type Selection */}
+                                            <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide">
+                                                {INPUT_TYPES.map(type => (
+                                                    <button
+                                                        key={type.id}
+                                                        onClick={() => setNewElType(type.id)}
+                                                        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all whitespace-nowrap ${newElType === type.id ? 'bg-blue-50 border-blue-500 text-blue-700 ring-1 ring-blue-500' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                                                    >
+                                                        {type.icon} {type.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+
+                                            <div className="flex flex-col sm:flex-row gap-2 items-end">
+                                                <div className="flex-1 w-full">
+                                                    <input 
+                                                        autoFocus
+                                                        placeholder="Nazwa elementu"
+                                                        className="w-full text-sm p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                                        value={newElName}
+                                                        onChange={(e) => setNewElName(e.target.value)}
+                                                    />
+                                                </div>
+                                                <div className="w-full sm:w-28 relative">
+                                                    <input 
+                                                        type="number"
+                                                        placeholder={newElType === 'select' || newElType === 'multiselect' ? 'Koszt opcji' : 'Wartość'}
+                                                        className="w-full text-sm p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                                        value={newElValue}
+                                                        onChange={(e) => setNewElValue(e.target.value)}
+                                                    />
+                                                    <span className="absolute right-2 top-2 text-xs text-slate-400 pointer-events-none">{unitLabel}</span>
+                                                </div>
+                                                <div className="flex gap-1 w-full sm:w-auto justify-end">
+                                                    <Button size="sm" onClick={handleConfirmAdd} disabled={!newElName.trim() || !newElValue}>Dodaj</Button>
+                                                    <Button size="sm" variant="ghost" onClick={handleCancelAdd}><X className="w-4 h-4" /></Button>
+                                                </div>
+                                            </div>
+                                            {(newElType === 'select' || newElType === 'multiselect') && (
+                                                <div className="text-[10px] text-slate-400 mt-2 italic">
+                                                    Zostanie utworzony element z jedną domyślną opcją o podanej wartości.
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <button 
+                                            onClick={(e) => handleStartAdd(e, group.id)}
+                                            className="w-full py-2 text-xs font-medium text-slate-500 hover:text-blue-600 hover:bg-white rounded border border-dashed border-slate-300 hover:border-blue-300 flex items-center justify-center gap-1 transition-all"
+                                        >
+                                            <Plus className="w-3 h-3" /> Dodaj nowy element do tej grupy
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+
                          </div>
                       )}
                    </div>
@@ -289,51 +498,85 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
           
           {/* Modifiers Card */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-             <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
-                <Settings2 className="w-5 h-5 text-slate-500" /> Modyfikatory
-             </h3>
+             <div className="flex justify-between items-start mb-4">
+               <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                  <Settings2 className="w-5 h-5 text-slate-500" /> Modyfikatory
+               </h3>
+               <button 
+                 onClick={() => setShowModifiersHelp(!showModifiersHelp)}
+                 className="text-slate-400 hover:text-blue-600 transition-colors"
+                 title="Wyjaśnienie modyfikatorów"
+               >
+                 <HelpCircle className="w-5 h-5" />
+               </button>
+             </div>
              
-             <div className="space-y-4">
-                {/* Complexity */}
-                <div>
-                   <label className="block text-xs font-bold text-slate-500 mb-2">Trudność Globalna</label>
-                   <div className="grid grid-cols-3 gap-2">
-                      {(['low', 'medium', 'high'] as const).map(lvl => (
-                         <button 
-                           key={lvl}
-                           onClick={() => setInputs(p => ({...p, complexity: lvl}))}
-                           className={`text-xs py-2 rounded-lg border ${inputs.complexity === lvl ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' : 'bg-white border-slate-200 text-slate-600'}`}
-                         >
-                            {lvl === 'low' ? 'Niska' : lvl === 'medium' ? 'Std' : 'Wysoka'}
-                         </button>
-                      ))}
-                   </div>
-                </div>
+             {/* Detailed Explanation */}
+             {showModifiersHelp && (
+               <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-100 text-xs text-blue-800 space-y-2 animate-in fade-in slide-in-from-top-1">
+                  <p>Te czynniki wpływają globalnie na całą wycenę, mnożąc bazową liczbę godzin.</p>
+                  <p>Możesz je skonfigurować w zakładce Konfiguracja.</p>
+               </div>
+             )}
 
-                {/* LOD */}
-                <div>
-                   <label className="block text-xs font-bold text-slate-500 mb-2">LOD (Detal)</label>
-                   <div className="grid grid-cols-2 gap-2">
-                      {(['standard', 'high'] as const).map(lvl => (
-                         <button 
-                           key={lvl}
-                           onClick={() => setInputs(p => ({...p, lod: lvl}))}
-                           className={`text-xs py-2 rounded-lg border ${inputs.lod === lvl ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-bold' : 'bg-white border-slate-200 text-slate-600'}`}
-                         >
-                            {lvl === 'standard' ? 'Standard' : 'BIM / High'}
-                         </button>
-                      ))}
-                   </div>
-                </div>
+             <div className="space-y-5">
+                {multiplierGroups.map(group => {
+                    if (!group.isEnabled) return null;
+                    
+                    if (group.type === 'scale') {
+                         if (!group.scaleConfig || inputs.area <= 0) return null;
+                         const scaleMult = Math.pow(group.scaleConfig.baseArea / inputs.area, group.scaleConfig.exponent);
+                         
+                         return (
+                            <div key={group.id} className="p-3 bg-purple-50 rounded-lg border border-purple-100">
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-xs font-bold text-purple-800">{group.name}</span>
+                                    <span className="text-xs font-bold text-purple-600">x{scaleMult.toFixed(2)}</span>
+                                </div>
+                                <div className="text-[10px] text-purple-500">
+                                    Automatyczna korekta dla {inputs.area}m²
+                                </div>
+                            </div>
+                         );
+                    }
 
-                {/* Express */}
-                <div 
-                   onClick={() => setInputs(p => ({...p, isExpress: !p.isExpress}))}
-                   className={`cursor-pointer rounded-lg border p-3 flex items-center gap-3 transition-all ${inputs.isExpress ? 'bg-amber-50 border-amber-400' : 'border-slate-200'}`}
-                 >
-                    <Zap className={`w-4 h-4 ${inputs.isExpress ? 'fill-amber-500 text-amber-600' : 'text-slate-400'}`} />
-                    <div className="flex-1 text-sm font-medium text-slate-700">Tryb Express (+20%)</div>
-                 </div>
+                    return (
+                        <div key={group.id}>
+                           <label className="block text-xs font-bold text-slate-500 mb-2">{group.name}</label>
+                           
+                           {group.type === 'select' && group.options && (
+                               <div className="flex flex-wrap gap-2">
+                                  {group.options.map(opt => {
+                                      const isSelected = inputs.selectedMultipliers[group.id] === opt.id;
+                                      return (
+                                         <button 
+                                           key={opt.id}
+                                           onClick={() => handleMultiplierSelect(group.id, opt.id)}
+                                           className={`text-xs py-2 px-3 rounded-lg border transition-all ${isSelected ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                                         >
+                                            {opt.label}
+                                         </button>
+                                      );
+                                  })}
+                               </div>
+                           )}
+
+                           {group.type === 'boolean' && (
+                               <div 
+                                 onClick={() => handleMultiplierBoolean(group.id)}
+                                 className={`cursor-pointer rounded-lg border p-3 flex items-center gap-3 transition-all ${inputs.selectedMultipliers[group.id] ? 'bg-amber-50 border-amber-400 shadow-sm' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                               >
+                                  <Zap className={`w-4 h-4 ${inputs.selectedMultipliers[group.id] ? 'fill-amber-500 text-amber-600' : 'text-slate-400'}`} />
+                                  <div className="flex-1 text-sm font-medium text-slate-700">
+                                      Aktywuj (x{group.value})
+                                  </div>
+                               </div>
+                           )}
+                           
+                           {group.description && <div className="text-[10px] text-slate-400 mt-1 ml-1">{group.description}</div>}
+                        </div>
+                    );
+                })}
              </div>
           </div>
 
@@ -351,7 +594,7 @@ export const ScopeStep: React.FC<ScopeStepProps> = ({
                 </div>
                  <div className="flex justify-between text-sm">
                    <span className="text-slate-400">Modyfikatory</span>
-                   <span className={modifiers.total > 1 ? "text-green-400" : "text-slate-200"}>x{modifiers.total.toFixed(2)}</span>
+                   <span className={modifierFactor > 1 ? "text-green-400" : "text-slate-200"}>x{modifierFactor.toFixed(2)}</span>
                 </div>
              </div>
           </div>

@@ -1,30 +1,56 @@
 
-
 import { CalculationTemplate, RoleType, Stage, TeamMember, StageType, GlobalMultipliers, BuildingType, ActionType } from './types';
 
 export const DEFAULT_TEAM: TeamMember[] = [
   { id: '1', role: RoleType.ARCHITECT, rate: 250 },
   { id: '2', role: RoleType.ASSISTANT, rate: 100 },
-  { id: '3', role: RoleType.MANAGER, rate: 300 },
+  { id: '3', role: RoleType.MANAGER, rate: 200 },
 ];
 
-export const DEFAULT_MULTIPLIERS: GlobalMultipliers = {
-  complexity: {
-    low: 0.9,    
-    medium: 1.0, 
-    high: 1.2    
+export const DEFAULT_MULTIPLIERS: GlobalMultipliers = [
+  {
+    id: 'mult_complexity',
+    name: 'Stopień Złożoności',
+    description: 'Wpływ skomplikowania bryły i funkcji na pracochłonność.',
+    type: 'select',
+    isEnabled: true,
+    options: [
+      { id: 'comp_low', label: 'Niska (Prosta bryła)', value: 0.9 },
+      { id: 'comp_med', label: 'Standard', value: 1.0, isDefault: true },
+      { id: 'comp_high', label: 'Wysoka (Skomplikowana)', value: 1.2 }
+    ]
   },
-  lod: {
-    standard: 1.0,
-    high: 1.25     
+  {
+    id: 'mult_lod',
+    name: 'Szczegółowość (LOD)',
+    description: 'Wymagany standard dokumentacji.',
+    type: 'select',
+    isEnabled: true,
+    options: [
+      { id: 'lod_std', label: 'Standard (LOD 200/300)', value: 1.0, isDefault: true },
+      { id: 'lod_high', label: 'Wysoki (BIM / High-End)', value: 1.25 }
+    ]
   },
-  express: 1.20,
-  scale: {
-    enabled: true,
-    baseArea: 150,
-    exponent: 0.2
+  {
+    id: 'mult_express',
+    name: 'Tryb Express',
+    description: 'Dodatek za pracę pod presją czasu (+20%).',
+    type: 'boolean',
+    isEnabled: true,
+    value: 1.20
+  },
+  {
+    id: 'mult_scale',
+    name: 'Efekt Skali',
+    description: 'Automatyczna korekta dla metrażu.',
+    type: 'scale',
+    isEnabled: true,
+    scaleConfig: {
+      baseArea: 150,
+      exponent: 0.2
+    }
   }
-};
+];
 
 export const STAGE_DISTRIBUTION: Record<string, number> = {
   'stage_inventory': 0.05,
@@ -42,7 +68,6 @@ export const DEFAULT_BUILDING_TYPES: BuildingType[] = [
   { id: 'b_industrial', name: 'Obiekt Przemysłowy / Hala' },
   { id: 'b_office', name: 'Budynek Biurowy' },
   { id: 'b_multi', name: 'Budynek Wielorodzinny' },
-  { id: 'b_interior', name: 'Wnętrza' }
 ];
 
 export const DEFAULT_ACTION_TYPES: ActionType[] = [
@@ -52,7 +77,7 @@ export const DEFAULT_ACTION_TYPES: ActionType[] = [
   { id: 'act_rebuild', name: 'Przebudowa' },
   { id: 'act_modernization', name: 'Modernizacja' },
   { id: 'act_usage_change', name: 'Zmiana sposobu użytkowania' },
-  { id: 'act_revital', name: 'Rewitalizacja / Rewaloryzacja' }
+  { id: 'act_interior', name: 'Wnętrza' }
 ];
 
 // --------------------------
@@ -70,14 +95,20 @@ export const DEFAULT_TEMPLATES: CalculationTemplate[] = [
         'stage_concept': 0.15,
         'stage_permit': 0.30,
         'stage_technical': 0.20,
-        'stage_executive': 0.20,
-        'stage_supervision': 0.10,
+        'stage_executive': 0.30, // Increased to absorb supervision weight
+    },
+    supervisionSettings: {
+        enabled: true,
+        duration: 20,
+        timeUnit: 'weeks',
+        frequency: 1,
+        visitTime: 3
     },
     defaultFixedCosts: {
         'ext_geo': 1500,
         'ext_soil': 1000
     },
-    defaultEnabledStages: ['stage_concept', 'stage_permit', 'stage_technical', 'stage_executive', 'ext_geo'],
+    defaultEnabledStages: ['stage_concept', 'stage_permit', 'stage_technical', 'stage_executive', 'stage_supervision', 'ext_geo'],
     groups: [
       {
         id: 'g_mass',
@@ -132,11 +163,17 @@ export const DEFAULT_TEMPLATES: CalculationTemplate[] = [
         'stage_concept': 0.10,
         'stage_permit': 0.35,
         'stage_technical': 0.25,
-        'stage_executive': 0.15,
-        'stage_supervision': 0.10,
+        'stage_executive': 0.25,
+    },
+    supervisionSettings: {
+        enabled: true,
+        duration: 12,
+        timeUnit: 'months',
+        frequency: 2, // visits per month
+        visitTime: 4
     },
     defaultFixedCosts: {},
-    defaultEnabledStages: ['stage_concept', 'stage_permit', 'stage_technical'],
+    defaultEnabledStages: ['stage_concept', 'stage_permit', 'stage_technical', 'stage_supervision'],
     groups: [
       {
         id: 'g_ind_struct',
@@ -184,7 +221,9 @@ export const DEFAULT_STAGES_TEMPLATE: Omit<Stage, 'roleAllocations'>[] = [
   { id: 'stage_permit', type: StageType.INTERNAL_RBH, name: 'Projekt Budowlany (PB)', description: 'Dokumentacja do PNB.', isEnabled: true },
   { id: 'stage_technical', type: StageType.INTERNAL_RBH, name: 'Projekt Techniczny (PT)', description: 'Konstrukcja, instalacje (koordynacja).', isEnabled: true },
   { id: 'stage_executive', type: StageType.INTERNAL_RBH, name: 'Projekt Wykonawczy (PW)', description: 'Detale architektury.', isEnabled: true },
-  { id: 'stage_supervision', type: StageType.INTERNAL_RBH, name: 'Nadzór Autorski', description: 'Wizyty na budowie.', isEnabled: true },
+  
+  // Special Supervision Stage (Should be present but handled differently in UI)
+  { id: 'stage_supervision', type: StageType.INTERNAL_RBH, name: 'Nadzór Autorski', description: 'Wizyty na budowie i koordynacja.', isEnabled: true },
   
   // External
   { id: 'ext_geo', type: StageType.EXTERNAL_FIXED, name: 'Geodezja (Mapa)', description: 'Mapa do celów projektowych.', isEnabled: false, fixedPrice: 0 },

@@ -3,7 +3,6 @@ import React, { useState } from 'react';
 import { Button } from '../ui/Button';
 import { GoogleButton } from './GoogleButton';
 import { LogIn, AlertCircle, KeyRound, ArrowLeft, MailCheck } from 'lucide-react';
-import { signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from 'firebase/auth';
 import { auth } from '../../firebase';
 
 interface LoginProps {
@@ -29,24 +28,28 @@ export const Login: React.FC<LoginProps> = ({ onGoogleLogin, onSwitchToRegister,
     setLoading(true);
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await auth.signInWithEmailAndPassword(email, password);
       
       // Check if email is verified
-      if (!userCredential.user.emailVerified) {
-        await signOut(auth);
+      if (userCredential.user && !userCredential.user.emailVerified) {
+        await auth.signOut();
         onVerificationNeeded(email);
         return;
       }
       
       // If verified, App.tsx onAuthStateChanged will handle redirection
     } catch (err: any) {
-      console.error(err);
-      if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
+      const errorCode = err.code;
+      // Handle expected authentication errors gracefully without cluttering console with Errors
+      if (errorCode === 'auth/invalid-credential' || errorCode === 'auth/user-not-found' || errorCode === 'auth/wrong-password') {
          setError('Błędny adres email lub hasło');
-      } else if (err.code === 'auth/too-many-requests') {
+         console.warn("Login attempt failed:", errorCode);
+      } else if (errorCode === 'auth/too-many-requests') {
          setError('Zbyt wiele nieudanych prób. Spróbuj ponownie później.');
+         console.warn("Login rate limited:", errorCode);
       } else {
-         setError('Wystąpił błąd logowania');
+         console.error("Login error:", err);
+         setError('Wystąpił błąd logowania. Spróbuj ponownie.');
       }
     } finally {
       setLoading(false);
@@ -65,13 +68,11 @@ export const Login: React.FC<LoginProps> = ({ onGoogleLogin, onSwitchToRegister,
     }
 
     try {
-      await sendPasswordResetEmail(auth, email);
+      await auth.sendPasswordResetEmail(email);
       setView('RESET_SUCCESS');
     } catch (err: any) {
       console.error(err);
       if (err.code === 'auth/user-not-found') {
-        // For security reasons, we might usually pretend it worked, but for this UX request we'll show error or success.
-        // Let's show a generic error or specific one depending on requirements.
         setError('Nie znaleziono użytkownika o takim adresie email.');
       } else if (err.code === 'auth/invalid-email') {
         setError('Nieprawidłowy format adresu email.');

@@ -1,8 +1,8 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { Stage, StageType, ProjectInputs, CalculationTemplate, TeamMember, ExternalQuote, TimeUnit } from '../../types';
+import { Stage, StageType, ProjectInputs, CalculationTemplate, TeamMember, ExternalQuote, TimeUnit, SupervisionSettings } from '../../types';
 import { Button } from '../ui/Button';
-import { CheckCircle2, Circle, ArrowRight, Plus, Trash2, Edit2, Check, X, Save, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Circle, ArrowRight, Plus, Trash2, Edit2, Check, X, Save, AlertCircle, HardHat, Clock, Calendar } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { TimeUnitSwitcher } from '../ui/TimeUnitSwitcher';
 
@@ -36,6 +36,19 @@ export const StepStages: React.FC<StepStagesProps> = ({
   // Track which stage is currently being edited (Internal Stages)
   const [editingInternalStageId, setEditingInternalStageId] = useState<string | null>(null);
 
+  // Local state for Supervision parameters (specific to this calculation instance)
+  const [supervisionParams, setSupervisionParams] = useState<SupervisionSettings | null>(null);
+
+  // Initialize Supervision Params from template if not set
+  useEffect(() => {
+    if (activeTemplate?.supervisionSettings && !supervisionParams) {
+        setSupervisionParams(activeTemplate.supervisionSettings);
+    } else if (!activeTemplate?.supervisionSettings && !supervisionParams) {
+        // Default fallback if template has no settings
+        setSupervisionParams({ enabled: true, duration: 20, timeUnit: 'weeks', frequency: 1, visitTime: 3 });
+    }
+  }, [activeTemplate, supervisionParams]);
+
   // Track inputs for new External Quotes (StageId -> {name, price})
   const [quoteInputs, setQuoteInputs] = useState<Record<string, {name: string, price: string}>>({});
 
@@ -49,43 +62,58 @@ export const StepStages: React.FC<StepStagesProps> = ({
   const conversionFactor = getConversionFactor();
   const unitLabel = timeUnit === 'h' ? 'RBH' : timeUnit === 'd' ? 'dni' : 'tyg';
 
-  // Recalculate Internal Stages based on Total RBH and Weights
+  // Recalculate Internal Stages based on Total RBH (Step 2) OR Supervision Params
   useEffect(() => {
     if (!activeTemplate) return;
 
     setStages(prevStages => {
       return prevStages.map(stage => {
         if (stage.type === StageType.INTERNAL_RBH) {
-           const hasAllocations = stage.roleAllocations.length > 0 && stage.roleAllocations.some(r => r.hours > 0);
            
-          const weight = activeTemplate.stageWeights[stage.id] || 0;
-          const stageTotalHours = totalRBH * weight;
-          const roleDist = activeTemplate.roleDistribution;
+           // Determine Total Hours for this Stage
+           let stageTotalHours = 0;
+
+           if (stage.id === 'stage_supervision' && supervisionParams) {
+               // Logic A: Supervision (Calculated from Params)
+               stageTotalHours = supervisionParams.duration * supervisionParams.frequency * supervisionParams.visitTime;
+           } else {
+               // Logic B: Standard Stage (Calculated from Weights * TotalRBH)
+               const weight = activeTemplate.stageWeights[stage.id] || 0;
+               stageTotalHours = totalRBH * weight;
+           }
           
-          const allocations = team.map(member => {
+           // Check if we should update allocations
+           // We only auto-update if:
+           // 1. It's supervision (dynamic params)
+           // 2. OR it's a standard stage and hasn't been manually edited heavily (heuristic check)
+           
+           const roleDist = activeTemplate.roleDistribution;
+           
+           const newAllocations = team.map(member => {
              const rolePct = roleDist[member.role] || 0;
              const membersWithSameRole = team.filter(t => t.role === member.role).length;
              let hours = 0;
              if (membersWithSameRole > 0 && rolePct > 0) {
                  hours = (stageTotalHours * rolePct) / membersWithSameRole;
              }
-             // Round to nearest full hour as requested (integers)
              return { memberId: member.id, hours: Math.round(hours) };
-          });
-          
-          // Only update if there is a significant change to avoid loops, but be sensitive enough
-          const currentSum = stage.roleAllocations.reduce((acc, r) => acc + r.hours, 0);
-          const newSum = allocations.reduce((acc, r) => acc + r.hours, 0);
-
-          // Use a smaller epsilon or just check structure length/presence
-          if (Math.abs(currentSum - newSum) > 0.001 || !hasAllocations) {
-              return { ...stage, roleAllocations: allocations };
-          }
+           });
+           
+           // Apply Update
+           // Note: This effectively resets manual tweaks when Global Complexity changes.
+           // For Supervision, it resets when Params change.
+           const currentSum = stage.roleAllocations.reduce((acc, r) => acc + r.hours, 0);
+           const newSum = newAllocations.reduce((acc, r) => acc + r.hours, 0);
+           
+           // Update if significantly different (prevents infinite loops with rounding)
+           if (Math.abs(currentSum - newSum) > 0.5 || stage.roleAllocations.length === 0) {
+               return { ...stage, roleAllocations: newAllocations };
+           }
         }
         return stage;
       });
     });
-  }, [totalRBH, activeTemplate, team]); 
+  }, [totalRBH, activeTemplate, team, supervisionParams]); 
 
   // --- Real-time Cost Calculation for Preview ---
   const currentTotalFee = useMemo(() => {
@@ -111,7 +139,6 @@ export const StepStages: React.FC<StepStagesProps> = ({
   // --- Internal Stage Manual Editing ---
 
   const handleRoleHourChange = (stageId: string, memberId: string, value: number) => {
-    // If input is 1 day, we save 8 hours. Value coming in is in "units", we save "hours".
     const hours = value * conversionFactor;
     setStages(prev => prev.map(s => {
       if (s.id !== stageId) return s;
@@ -122,6 +149,13 @@ export const StepStages: React.FC<StepStagesProps> = ({
         )
       };
     }));
+  };
+
+  const handleSupervisionParamChange = (field: keyof SupervisionSettings, value: any) => {
+      setSupervisionParams(prev => {
+          if (!prev) return null;
+          return { ...prev, [field]: value };
+      });
   };
 
   const saveInternalEdit = () => {
@@ -217,18 +251,38 @@ export const StepStages: React.FC<StepStagesProps> = ({
                   {stages.filter(s => s.type === StageType.INTERNAL_RBH).map(stage => {
                       const stageTotalHrs = stage.roleAllocations.reduce((acc, curr) => acc + curr.hours, 0);
                       const isEditing = editingInternalStageId === stage.id;
+                      const isSupervision = stage.id === 'stage_supervision';
                       
                       return (
                           <div key={stage.id} className={`p-4 transition-colors ${stage.isEnabled ? 'bg-white' : 'bg-slate-50 opacity-75'}`}>
                               <div className="flex items-start gap-4">
                                   <button onClick={() => toggleStage(stage.id)} className="mt-1">
-                                      {stage.isEnabled ? <CheckCircle2 className="w-6 h-6 text-blue-600" /> : <Circle className="w-6 h-6 text-slate-300" />}
+                                      {stage.isEnabled ? <CheckCircle2 className={`w-6 h-6 ${isSupervision ? 'text-orange-500' : 'text-blue-600'}`} /> : <Circle className="w-6 h-6 text-slate-300" />}
                                   </button>
                                   <div className="flex-1">
                                       <div className="flex justify-between items-start">
                                           <div>
-                                              <h4 className={`font-bold ${stage.isEnabled ? 'text-slate-900' : 'text-slate-500'}`}>{stage.name}</h4>
+                                              <h4 className={`font-bold flex items-center gap-2 ${stage.isEnabled ? 'text-slate-900' : 'text-slate-500'}`}>
+                                                  {stage.name}
+                                                  {isSupervision && (
+                                                      <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200 flex items-center gap-1">
+                                                          <HardHat className="w-3 h-3" /> Nadzór
+                                                      </span>
+                                                  )}
+                                              </h4>
                                               <p className="text-sm text-slate-500">{stage.description}</p>
+                                              
+                                              {/* Supervision Params Badge (Read Only) */}
+                                              {isSupervision && stage.isEnabled && !isEditing && supervisionParams && (
+                                                  <div className="mt-2 inline-flex items-center gap-2 text-xs text-orange-800 bg-orange-50 px-2 py-1 rounded border border-orange-100">
+                                                      <Calendar className="w-3 h-3" />
+                                                      <span>{supervisionParams.duration} {supervisionParams.timeUnit === 'weeks' ? 'tyg.' : 'mies.'}</span>
+                                                      <span className="text-orange-300">|</span>
+                                                      <span>{supervisionParams.frequency} wiz./{supervisionParams.timeUnit === 'weeks' ? 'tydz.' : 'm-c'}</span>
+                                                      <span className="text-orange-300">|</span>
+                                                      <span>{supervisionParams.visitTime}h / wizyta</span>
+                                                  </div>
+                                              )}
                                           </div>
                                           {stage.isEnabled && (
                                               <div className="flex items-center gap-4">
@@ -248,32 +302,90 @@ export const StepStages: React.FC<StepStagesProps> = ({
                                           )}
                                       </div>
                                       
-                                      {/* Role Breakdown / Editing */}
+                                      {/* Editing Mode */}
                                       {stage.isEnabled && (
                                           <div className="mt-4">
                                               {isEditing ? (
-                                                  <div className="bg-blue-50/50 p-4 rounded-lg border border-blue-100 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                                                      {team.map(member => {
-                                                          const alloc = stage.roleAllocations.find(r => r.memberId === member.id);
-                                                          const hours = alloc ? alloc.hours : 0;
-                                                          return (
-                                                              <div key={member.id}>
-                                                                  <label className="block text-xs font-bold text-slate-500 mb-1">{member.role}</label>
-                                                                  <div className="relative">
+                                                  <div className={`p-4 rounded-lg border grid gap-4 ${isSupervision ? 'bg-orange-50 border-orange-100' : 'bg-blue-50/50 border-blue-100'}`}>
+                                                      
+                                                      {/* Specific Supervision Editor */}
+                                                      {isSupervision && supervisionParams && (
+                                                          <div className="pb-4 mb-4 border-b border-orange-200">
+                                                              <label className="text-xs font-bold text-orange-800 uppercase tracking-wide mb-3 block">Parametry Nadzoru</label>
+                                                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                                                  <div>
+                                                                      <label className="block text-xs font-semibold text-slate-600 mb-1">Czas trwania</label>
+                                                                      <div className="flex gap-2">
+                                                                          <input 
+                                                                              type="number" 
+                                                                              min="0"
+                                                                              value={supervisionParams.duration}
+                                                                              onChange={(e) => handleSupervisionParamChange('duration', parseFloat(e.target.value) || 0)}
+                                                                              className="w-full border border-orange-300 rounded px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-orange-500"
+                                                                          />
+                                                                           <select
+                                                                              className="border border-orange-300 rounded px-1 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-orange-500"
+                                                                              value={supervisionParams.timeUnit}
+                                                                              onChange={(e) => handleSupervisionParamChange('timeUnit', e.target.value)}
+                                                                          >
+                                                                              <option value="weeks">tyg.</option>
+                                                                              <option value="months">mies.</option>
+                                                                          </select>
+                                                                      </div>
+                                                                  </div>
+                                                                  <div>
+                                                                      <label className="block text-xs font-semibold text-slate-600 mb-1">Wizyt na jednostkę</label>
                                                                       <input 
-                                                                          type="number"
+                                                                          type="number" 
                                                                           min="0"
-                                                                          step={timeUnit === 'h' ? 1 : 0.1}
-                                                                          // Display rounded value
-                                                                          value={timeUnit === 'h' ? hours : Math.round((hours / conversionFactor) * 100) / 100}
-                                                                          onChange={(e) => handleRoleHourChange(stage.id, member.id, parseFloat(e.target.value) || 0)}
-                                                                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                                                          value={supervisionParams.frequency}
+                                                                          onChange={(e) => handleSupervisionParamChange('frequency', parseFloat(e.target.value) || 0)}
+                                                                          className="w-full border border-orange-300 rounded px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-orange-500"
                                                                       />
-                                                                      <span className="absolute right-2 top-1.5 text-xs text-slate-400">{unitLabel}</span>
+                                                                  </div>
+                                                                  <div>
+                                                                      <label className="block text-xs font-semibold text-slate-600 mb-1">RBH / wizytę</label>
+                                                                      <input 
+                                                                          type="number" 
+                                                                          min="0"
+                                                                          value={supervisionParams.visitTime}
+                                                                          onChange={(e) => handleSupervisionParamChange('visitTime', parseFloat(e.target.value) || 0)}
+                                                                          className="w-full border border-orange-300 rounded px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-orange-500"
+                                                                      />
                                                                   </div>
                                                               </div>
-                                                          );
-                                                      })}
+                                                          </div>
+                                                      )}
+
+                                                      {/* Standard Role Editor */}
+                                                      <div>
+                                                          <label className={`text-xs font-bold uppercase tracking-wide mb-3 block ${isSupervision ? 'text-orange-800' : 'text-blue-800'}`}>
+                                                              {isSupervision ? 'Rozkład Czasu Pracy' : 'Przydział Zespołu'}
+                                                          </label>
+                                                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                                                              {team.map(member => {
+                                                                  const alloc = stage.roleAllocations.find(r => r.memberId === member.id);
+                                                                  const hours = alloc ? alloc.hours : 0;
+                                                                  return (
+                                                                      <div key={member.id}>
+                                                                          <label className="block text-xs font-bold text-slate-500 mb-1">{member.role}</label>
+                                                                          <div className="relative">
+                                                                              <input 
+                                                                                  type="number"
+                                                                                  min="0"
+                                                                                  step={timeUnit === 'h' ? 1 : 0.1}
+                                                                                  // Display rounded value
+                                                                                  value={timeUnit === 'h' ? hours : Math.round((hours / conversionFactor) * 100) / 100}
+                                                                                  onChange={(e) => handleRoleHourChange(stage.id, member.id, parseFloat(e.target.value) || 0)}
+                                                                                  className={`w-full border rounded px-2 py-1 text-sm outline-none focus:ring-2 ${isSupervision ? 'border-orange-300 focus:ring-orange-500' : 'border-blue-300 focus:ring-blue-500'}`}
+                                                                              />
+                                                                              <span className="absolute right-2 top-1.5 text-xs text-slate-400">{unitLabel}</span>
+                                                                          </div>
+                                                                      </div>
+                                                                  );
+                                                              })}
+                                                          </div>
+                                                      </div>
                                                   </div>
                                               ) : (
                                                   stageTotalHrs > 0 && (
@@ -281,7 +393,7 @@ export const StepStages: React.FC<StepStagesProps> = ({
                                                           {stage.roleAllocations.filter(r => r.hours > 0).map(alloc => {
                                                               const member = team.find(m => m.id === alloc.memberId);
                                                               return (
-                                                                  <div key={alloc.memberId} className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded border border-slate-200">
+                                                                  <div key={alloc.memberId} className={`text-xs px-2 py-1 rounded border ${isSupervision ? 'bg-orange-50 text-orange-800 border-orange-100' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
                                                                       {member?.role}: <strong>{(alloc.hours / conversionFactor).toFixed(timeUnit === 'h' ? 0 : 1)}{unitLabel}</strong>
                                                                   </div>
                                                               );

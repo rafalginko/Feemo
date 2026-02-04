@@ -182,6 +182,11 @@ export const SummaryStep: React.FC<SummaryStepProps> = ({
                         const opt = el.options.find(o => o.id === val);
                         if (opt) displayVal = opt.name;
                     }
+                } else if (el.inputType === 'multiselect') {
+                    if (Array.isArray(val) && val.length > 0 && el.options) {
+                        const selectedNames = val.map(id => el.options?.find(o => o.id === id)?.name).filter(Boolean);
+                        displayVal = selectedNames.join(', ');
+                    }
                 } else if (typeof val === 'number' && val > 0) {
                     displayVal = val.toString();
                 }

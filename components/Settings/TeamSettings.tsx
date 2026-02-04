@@ -1,8 +1,8 @@
 
-import React from 'react';
+import React, { useRef } from 'react';
 import { TeamMember, RoleType } from '../../types';
 import { Button } from '../ui/Button';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, GripVertical } from 'lucide-react';
 
 interface TeamSettingsProps {
   team: TeamMember[];
@@ -10,6 +10,9 @@ interface TeamSettingsProps {
 }
 
 export const TeamSettings: React.FC<TeamSettingsProps> = ({ team, setTeam }) => {
+  const dragItem = useRef<number | null>(null);
+  const dragOverItem = useRef<number | null>(null);
+
   const handleAddMember = () => {
     const newMember: TeamMember = {
       id: Math.random().toString(36).substr(2, 9),
@@ -29,19 +32,59 @@ export const TeamSettings: React.FC<TeamSettingsProps> = ({ team, setTeam }) => 
     setTeam(team.map((m) => (m.id === id ? { ...m, [field]: value } : m)));
   };
 
+  const handleDragStart = (index: number) => {
+    dragItem.current = index;
+  };
+
+  const handleDragEnter = (index: number) => {
+    if (dragItem.current === null) return;
+    
+    const dragIndex = dragItem.current;
+    const dragOverIndex = index;
+
+    if (dragIndex === dragOverIndex) return;
+
+    const newTeam = [...team];
+    const draggedMember = newTeam[dragIndex];
+    newTeam.splice(dragIndex, 1);
+    newTeam.splice(dragOverIndex, 0, draggedMember);
+    
+    dragItem.current = dragOverIndex;
+    setTeam(newTeam);
+  };
+
+  const handleDragEnd = () => {
+    dragItem.current = null;
+    dragOverItem.current = null;
+  };
+
   return (
     <div className="max-w-3xl mx-auto">
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 md:p-8">
         <div className="mb-6 pb-4 border-b border-slate-100">
           <h2 className="text-lg font-semibold text-slate-900">Struktura Zespołu</h2>
           <p className="text-slate-500 text-sm mt-1">
-            Zdefiniuj role i stawki godzinowe (RBH) używane w Twoim biurze. Te ustawienia będą miały zastosowanie do wszystkich nowych kalkulacji.
+            Zdefiniuj role i stawki godzinowe (RBH). Przeciągnij elementy, aby ustalić kolejność w tabelach.
           </p>
         </div>
 
         <div className="space-y-4">
-          {team.map((member) => (
-            <div key={member.id} className="flex flex-col md:flex-row gap-4 items-end md:items-center bg-slate-50 p-4 rounded-lg border border-slate-200/60">
+          {team.map((member, index) => (
+            <div 
+              key={member.id}
+              draggable
+              onDragStart={() => handleDragStart(index)}
+              onDragEnter={() => handleDragEnter(index)}
+              onDragEnd={handleDragEnd}
+              onDragOver={(e) => e.preventDefault()}
+              className="flex flex-col md:flex-row gap-4 items-end md:items-center bg-slate-50 p-4 rounded-lg border border-slate-200/60 group transition-all hover:shadow-md cursor-default"
+            >
+              
+              {/* Drag Handle */}
+              <div className="flex items-center justify-center pr-2 border-r border-slate-200/60 mr-2 cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600">
+                <GripVertical className="w-5 h-5" />
+              </div>
+
               <div className="flex-1 w-full">
                 <label className="block text-xs font-semibold text-slate-500 mb-1">Rola</label>
                 <input
@@ -95,7 +138,7 @@ export const TeamSettings: React.FC<TeamSettingsProps> = ({ team, setTeam }) => 
       </div>
       
       <div className="mt-4 p-4 bg-blue-50 text-blue-800 text-sm rounded-lg border border-blue-100">
-        Zmiany w zespole zostaną automatycznie uwzględnione przy tworzeniu nowych kalkulacji. Zmiana ról może wymagać aktualizacji dystrybucji procentowej w sekcji "Modele Wyliczeń".
+        Zmiany w zespole oraz ich kolejność zostaną automatycznie uwzględnione przy tworzeniu nowych kalkulacji oraz edycji istniejących.
       </div>
     </div>
   );

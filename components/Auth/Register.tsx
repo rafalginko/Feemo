@@ -3,8 +3,7 @@ import React, { useState } from 'react';
 import { Button } from '../ui/Button';
 import { GoogleButton } from './GoogleButton';
 import { UserPlus, AlertCircle } from 'lucide-react';
-import { createUserWithEmailAndPassword, updateProfile, sendEmailVerification, signOut } from 'firebase/auth';
-import { auth } from '../../firebase';
+import { auth, db } from '../../firebase';
 
 interface RegisterProps {
   onGoogleLogin: () => void;
@@ -14,7 +13,8 @@ interface RegisterProps {
 }
 
 export const Register: React.FC<RegisterProps> = ({ onGoogleLogin, onSwitchToLogin, onBack, onVerificationNeeded }) => {
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -35,18 +35,40 @@ export const Register: React.FC<RegisterProps> = ({ onGoogleLogin, onSwitchToLog
       return;
     }
 
+    if (!firstName.trim() || !lastName.trim()) {
+      setError('Podaj imię i nazwisko.');
+      return;
+    }
+
     setLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(userCredential.user, {
-        displayName: name
-      });
+      const userCredential = await auth.createUserWithEmailAndPassword(email, password);
       
-      // Send verification email
-      await sendEmailVerification(userCredential.user);
+      const displayName = `${firstName.trim()} ${lastName.trim()}`;
+
+      if (userCredential.user) {
+        // 1. Update Auth Profile
+        await userCredential.user.updateProfile({
+          displayName: displayName
+        });
+
+        // 2. Create User Document in Firestore explicitly with split names
+        await db.collection('users').doc(userCredential.user.uid).set({
+           uid: userCredential.user.uid,
+           email: email,
+           displayName: displayName,
+           firstName: firstName.trim(),
+           lastName: lastName.trim(),
+           photoURL: '',
+           createdAt: new Date().toISOString()
+        });
+        
+        // 3. Send verification email
+        await userCredential.user.sendEmailVerification();
+      }
       
       // Sign out immediately so they can't access app
-      await signOut(auth);
+      await auth.signOut();
       
       // Redirect to verification screen
       onVerificationNeeded(email);
@@ -101,16 +123,28 @@ export const Register: React.FC<RegisterProps> = ({ onGoogleLogin, onSwitchToLog
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Nazwa / Firma</label>
-          <input
-            type="text"
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-green-500 outline-none"
-          />
-        </div>
+         <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Imię</label>
+              <input
+                type="text"
+                required
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-green-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Nazwisko</label>
+              <input
+                type="text"
+                required
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-green-500 outline-none"
+              />
+            </div>
+         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
           <input

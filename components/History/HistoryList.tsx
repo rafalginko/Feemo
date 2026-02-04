@@ -1,9 +1,8 @@
 
 import React, { useState } from 'react';
-import { SavedCalculation, ProjectInputs, StageType, ProjectGroup, CalculationTemplate, TimeUnit } from '../../types';
+import { SavedCalculation, ProjectInputs, StageType, ProjectGroup, CalculationTemplate } from '../../types';
 import { Button } from '../ui/Button';
-import { FolderOpen, Trash2, Copy, Calendar, MapPin, DollarSign, Eye, Download, ChevronDown, ChevronRight, Folder, FolderInput, Edit2, Check, X, Plus, PlayCircle } from 'lucide-react';
-import { TimeUnitSwitcher } from '../ui/TimeUnitSwitcher';
+import { FolderOpen, Trash2, Copy, Eye, Download, ChevronDown, ChevronRight, Folder, FolderInput, Edit2, Check, X, Plus, PlayCircle, Pencil } from 'lucide-react';
 
 interface HistoryListProps {
   history: SavedCalculation[];
@@ -11,21 +10,21 @@ interface HistoryListProps {
   onLoad: (calc: SavedCalculation) => void;
   onDelete: (id: string) => void;
   onPreview: (calc: SavedCalculation) => void;
+  onEdit: (calc: SavedCalculation) => void;
   onBack: () => void;
   onCreateProject?: (name: string) => void;
   onUpdateProject?: (id: string, name: string) => void;
   onDeleteProject?: (id: string) => void;
   onMoveCalculation?: (calcId: string, projectId: string | null) => void;
   onStartCalculation?: (projectId: string) => void;
+  onUpdateCalculationName?: (id: string, name: string) => void;
   templates: CalculationTemplate[];
-  timeUnit: TimeUnit;
-  setTimeUnit: (unit: TimeUnit) => void;
 }
 
 export const HistoryList: React.FC<HistoryListProps> = ({ 
-  history, projects, onLoad, onDelete, onPreview, onBack,
-  onCreateProject, onUpdateProject, onDeleteProject, onMoveCalculation, onStartCalculation,
-  templates, timeUnit, setTimeUnit
+  history, projects, onLoad, onDelete, onPreview, onEdit, onBack,
+  onCreateProject, onUpdateProject, onDeleteProject, onMoveCalculation, onStartCalculation, onUpdateCalculationName,
+  templates
 }) => {
   
   // State to track expanded project folders
@@ -38,6 +37,10 @@ export const HistoryList: React.FC<HistoryListProps> = ({
   // Project Editing State
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingProjectName, setEditingProjectName] = useState('');
+
+  // Calculation Editing State
+  const [editingCalcId, setEditingCalcId] = useState<string | null>(null);
+  const [editingCalcName, setEditingCalcName] = useState('');
 
   // Move Calculation State
   const [movingCalc, setMovingCalc] = useState<SavedCalculation | null>(null); // The calculation being moved
@@ -66,6 +69,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
     }
   };
 
+  // --- Project Editing Handlers ---
   const startEditingProject = (project: ProjectGroup, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingProjectId(project.id);
@@ -92,6 +96,27 @@ export const HistoryList: React.FC<HistoryListProps> = ({
     }
   };
 
+  // --- Calculation Editing Handlers ---
+  const startEditingCalc = (calc: SavedCalculation, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingCalcId(calc.id);
+    setEditingCalcName(calc.name);
+  };
+
+  const saveEditingCalc = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (editingCalcId && editingCalcName.trim() && onUpdateCalculationName) {
+      onUpdateCalculationName(editingCalcId, editingCalcName.trim());
+      setEditingCalcId(null);
+    }
+  };
+
+  const cancelEditingCalc = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingCalcId(null);
+  };
+
+  // --- Move Handlers ---
   const openMoveModal = (calc: SavedCalculation) => {
     setMovingCalc(calc);
     setTargetProjectId(calc.projectId || '');
@@ -213,7 +238,6 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                </Button>
              )
            )}
-           <TimeUnitSwitcher unit={timeUnit} setUnit={setTimeUnit} />
            <Button variant="secondary" onClick={onBack}>Wróć</Button>
         </div>
       </div>
@@ -233,7 +257,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
             const groupId = group.project ? group.project.id : 'orphans';
             const groupName = group.project ? group.project.name : 'Pozostałe / Nieprzypisane';
             const isExpanded = expandedProjects.has(groupId);
-            const isEditing = editingProjectId === groupId;
+            const isProjectEditing = editingProjectId === groupId;
 
             return (
               <div key={groupId} className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
@@ -246,7 +270,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                     {isExpanded ? <ChevronDown className="w-5 h-5 text-slate-400" /> : <ChevronRight className="w-5 h-5 text-slate-400" />}
                     <Folder className={`w-5 h-5 ${group.project ? 'text-blue-500' : 'text-slate-400'}`} />
                     
-                    {isEditing ? (
+                    {isProjectEditing ? (
                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                           <input 
                             autoFocus
@@ -270,7 +294,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                   {/* Project Actions */}
                   <div className="flex items-center gap-1">
                      {/* Add New Calculation to this Project */}
-                     {group.project && onStartCalculation && !isEditing && (
+                     {group.project && onStartCalculation && !isProjectEditing && (
                        <Button 
                          variant="ghost" 
                          size="sm" 
@@ -282,7 +306,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                        </Button>
                      )}
 
-                     {group.project && !isEditing && (
+                     {group.project && !isProjectEditing && (
                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity border-l border-slate-200 pl-2 ml-2">
                           {onUpdateProject && (
                              <Button variant="ghost" size="sm" onClick={(e) => startEditingProject(group.project!, e)} title="Edytuj nazwę">
@@ -311,12 +335,39 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                       <div key={item.id} className="p-4 hover:bg-blue-50/30 transition-colors group/item">
                         <div className="flex flex-col xl:flex-row justify-between xl:items-center gap-4">
                           <div className="flex-1 min-w-0 ml-8"> {/* Indent to align with header text */}
-                            <div className="flex items-center gap-2 mb-1">
-                              <h4 className="text-sm font-bold text-slate-900 truncate">{item.name}</h4>
-                              <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-xs">
-                                {new Date(item.date).toLocaleDateString('pl-PL')}
-                              </span>
+                            
+                            {/* Calculation Name & Edit Mode */}
+                            <div className="flex items-center gap-2 mb-1 h-8">
+                              {editingCalcId === item.id ? (
+                                 <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                                    <input 
+                                       autoFocus
+                                       value={editingCalcName}
+                                       onChange={e => setEditingCalcName(e.target.value)}
+                                       className="border border-blue-300 rounded px-2 py-1 text-sm font-bold text-slate-900 w-full max-w-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                                    />
+                                    <Button size="sm" onClick={saveEditingCalc} className="h-7 px-2"><Check className="w-3 h-3" /></Button>
+                                    <Button size="sm" variant="ghost" onClick={cancelEditingCalc} className="h-7 px-2"><X className="w-3 h-3" /></Button>
+                                 </div>
+                              ) : (
+                                <>
+                                  <h4 className="text-sm font-bold text-slate-900 truncate">{item.name}</h4>
+                                  {onUpdateCalculationName && (
+                                    <button 
+                                      onClick={(e) => startEditingCalc(item, e)}
+                                      className="opacity-0 group-hover/item:opacity-100 text-slate-400 hover:text-blue-600 transition-opacity p-1"
+                                      title="Zmień nazwę wariantu"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                  <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-xs ml-2">
+                                    {new Date(item.date).toLocaleDateString('pl-PL')}
+                                  </span>
+                                </>
+                              )}
                             </div>
+
                             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                               <span>{getProjectLabel(item.inputs)}</span>
                               <span>|</span>
@@ -327,6 +378,9 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                           </div>
 
                           <div className="flex items-center gap-1 ml-8 xl:ml-0">
+                            <Button variant="ghost" size="sm" onClick={() => onEdit(item)} title="Edytuj kalkulację">
+                              <Pencil className="w-4 h-4 text-slate-400 hover:text-blue-600" />
+                            </Button>
                             <Button variant="ghost" size="sm" onClick={() => onPreview(item)} title="Podgląd">
                               <Eye className="w-4 h-4 text-slate-400 hover:text-blue-600" />
                             </Button>
